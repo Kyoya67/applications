@@ -11,23 +11,12 @@ export class FetchError extends Error {
 }
 
 export const handleSucceed = async (res: Response) => {
+  const data = await res.json();
   if (!res.ok) {
     throw new FetchError(res.statusText, res.status);
   }
-
-  const text = await res.text();
-  if (!text) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    console.error('JSON parse error:', text);
-    throw new Error('Invalid JSON response');
-  }
+  return data;
 };
-
 export const handleFailed = async (err: unknown) => {
   if (err instanceof FetchError) {
     console.warn(err.message);
