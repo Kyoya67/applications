@@ -51,9 +51,9 @@ export default async function Page({ params }: Props) {
         <footer className={styles.footer}>
           <Heading level={2} id={titleId} className={styles.title}>
             {/* ★: Link を増やすことで prefetch を促す */}
-            <Link href={`/photos/${params.photoId}`} prefetch>
+            <a href={`/photos/${params.photoId}`}>
               {photo.title}
-            </Link>
+            </a>
           </Heading>
           <Typography id={descriptionId} className={styles.description}>
             {photo.description}
