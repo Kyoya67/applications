@@ -11,7 +11,7 @@ const customJestConfig = {
     testEnvironment: 'jsdom',
     moduleDirectories: ['node_modules', '<rootDir>/'],
     testPathIgnorePatterns: ['<rootDir>/.next/', '<rootDir>/node_modules/'],
-    moduleNameMapping: {
+    moduleNameMapper: {
         '^@/(.*)$': '<rootDir>/src/$1',
     },
 }

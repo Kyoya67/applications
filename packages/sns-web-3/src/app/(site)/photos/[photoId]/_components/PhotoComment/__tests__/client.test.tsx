@@ -7,14 +7,7 @@ jest.mock('../action', () => ({
     postComment: jest.fn()
 }));
 
-// React hooksのモック
-jest.mock('react', () => ({
-    ...jest.requireActual('react'),
-    useOptimistic: jest.fn(),
-}));
-
 const mockPostComment = require('../action').postComment;
-const mockUseOptimistic = require('react').useOptimistic;
 
 // 基本的なprops
 const defaultProps = {
@@ -30,105 +23,192 @@ const defaultProps = {
     ]
 };
 
-describe('ClientPhotoComment - 連続投稿テスト', () => {
+describe('ClientPhotoComment - 実際のコンポーネントテスト', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+    });
 
-        // useOptimistic のモック実装
-        let optimisticState = defaultProps.defaultComments;
-        let updateFunction: any;
+    test('実際のコンポーネントで連続投稿をテスト', async () => {
+        // Server Action のレスポンスをモック
+        mockPostComment
+            .mockResolvedValueOnce({
+                comment: { id: 'comment3', comment: 'テスト1', authorId: 'user123', photoId: 'photo123', createdAt: '2025-07-26T10:00:00Z' }
+            })
+            .mockResolvedValueOnce({
+                comment: { id: 'comment4', comment: 'テスト2', authorId: 'user123', photoId: 'photo123', createdAt: '2025-07-26T10:01:00Z' }
+            });
 
-        mockUseOptimistic.mockImplementation((initialState: any, updateFn: any) => {
-            updateFunction = updateFn;
+        // 実際のコンポーネントをレンダリング
+        render(<ClientPhotoComment {...defaultProps} />);
 
-            const addOptimisticComment = (newComment: any) => {
-                optimisticState = updateFn(optimisticState, newComment);
-            };
+        // 初期状態の確認
+        expect(screen.getByText('古いコメント1')).toBeInTheDocument();
+        expect(screen.getByText('古いコメント2')).toBeInTheDocument();
 
-            return [optimisticState, addOptimisticComment];
+        const commentInput = screen.getByPlaceholderText('この写真へコメントを入力...');
+
+        // 【1回目の投稿】
+        await act(async () => {
+            fireEvent.change(commentInput, { target: { value: 'テスト1' } });
+            fireEvent.submit(commentInput.closest('form')!);
+        });
+
+        // Optimistic Update で即座に表示される
+        expect(screen.getByText('テスト1')).toBeInTheDocument();
+        console.log('1回目投稿後の画面:', screen.getByText('テスト1').textContent);
+
+        // 【2回目の投稿（1回目完了前）】
+        await act(async () => {
+            fireEvent.change(commentInput, { target: { value: 'テスト2' } });
+            fireEvent.submit(commentInput.closest('form')!);
+        });
+
+        // 2回目のOptimistic Update
+        expect(screen.getByText('テスト2')).toBeInTheDocument();
+
+        // 重要：テスト1がまだ表示されているか？
+        const test1Elements = screen.queryAllByText('テスト1');
+        const test2Elements = screen.queryAllByText('テスト2');
+
+        console.log('2回目投稿後:');
+        console.log('- テスト1要素数:', test1Elements.length);
+        console.log('- テスト2要素数:', test2Elements.length);
+
+        // この時点でテスト1が消えているかもしれない
+        if (test1Elements.length === 0) {
+            console.log('❌ 問題確認：テスト1が画面から消えました（Optimistic Update段階）');
+        } else {
+            console.log('✅ Optimistic Update段階では両方表示');
+        }
+
+        // Server Actions の完了を待つ
+        await waitFor(() => {
+            expect(mockPostComment).toHaveBeenCalledTimes(2);
+        });
+
+        // 最終的な表示状態をチェック
+        await waitFor(() => {
+            const finalTest1 = screen.queryAllByText('テスト1');
+            const finalTest2 = screen.queryAllByText('テスト2');
+
+            console.log('Server Action完了後:');
+            console.log('- テスト1要素数:', finalTest1.length);
+            console.log('- テスト2要素数:', finalTest2.length);
+
+            expect(screen.getByText('テスト2')).toBeInTheDocument();
+
+            // 重要なテスト：テスト1も表示されているか？
+            if (finalTest1.length === 0) {
+                console.log('❌ 確定：テスト1が最終的に消えました');
+                // これがバグの証明
+                expect(finalTest1.length).toBeGreaterThan(0); // このテストは失敗するはず
+            } else {
+                console.log('✅ 両方のコメントが最終的に表示されている');
+            }
         });
     });
 
-    test('連続投稿の動作確認（問題検証）', async () => {
-        // 手動でuseOptimisticの動作をテスト
-        const initialComments = [
-            { id: 'comment1', comment: '古いコメント1', authorId: 'author1' },
-            { id: 'comment2', comment: '古いコメント2', authorId: 'author2' }
-        ];
+    test('遅いServer Actionでの連続投稿テスト', async () => {
+        // より現実的なタイミングでテスト
+        let resolveFirst: (value: any) => void;
+        let resolveSecond: (value: any) => void;
 
-        // useOptimisticのupdateFunctionをテスト
-        const updateFn = (prevComments: any[], newComment: any) => {
-            if (prevComments.length <= 1) return [newComment];
-            if (prevComments[0]?.comment === newComment.comment) return prevComments;
-            return [{ ...newComment, sending: true }, ...prevComments];
-        };
+        mockPostComment
+            .mockImplementationOnce(() => new Promise(resolve => {
+                resolveFirst = resolve;
+            }))
+            .mockImplementationOnce(() => new Promise(resolve => {
+                resolveSecond = resolve;
+            }));
 
-        // 1回目の追加
-        const comment1 = { id: 'new1', comment: 'テスト1', authorId: 'user123' };
-        const afterFirst = updateFn(initialComments, comment1);
+        render(<ClientPhotoComment {...defaultProps} />);
 
-        console.log('1回目追加後:', afterFirst);
-        expect(afterFirst).toHaveLength(3);
-        expect(afterFirst[0].comment).toBe('テスト1');
+        const commentInput = screen.getByPlaceholderText('この写真へコメントを入力...');
 
-        // 2回目の追加（重要：prevCommentsは何を参照するか）
-        const comment2 = { id: 'new2', comment: 'テスト2', authorId: 'user123' };
+        // 1回目投稿
+        await act(async () => {
+            fireEvent.change(commentInput, { target: { value: '遅い1' } });
+            fireEvent.submit(commentInput.closest('form')!);
+        });
 
-        // 問題：prevCommentsはinitialCommentsを参照？それともafterFirstを参照？
-        const afterSecond = updateFn(initialComments, comment2); // ←ここがポイント
+        expect(screen.getByText('遅い1')).toBeInTheDocument();
 
-        console.log('2回目追加後:', afterSecond);
-        console.log('テスト1はまだ存在するか:', afterSecond.some(c => c.comment === 'テスト1'));
+        // 2回目投稿（1回目がまだ完了していない）
+        await act(async () => {
+            fireEvent.change(commentInput, { target: { value: '遅い2' } });
+            fireEvent.submit(commentInput.closest('form')!);
+        });
 
-        // この結果で問題が確認できる
-        expect(afterSecond.some(c => c.comment === 'テスト1')).toBe(false); // テスト1が消える
+        // この時点での状態確認
+        const slow1Count = screen.queryAllByText('遅い1').length;
+        const slow2Count = screen.queryAllByText('遅い2').length;
+
+        console.log('両方未完了時:');
+        console.log('- 遅い1要素数:', slow1Count);
+        console.log('- 遅い2要素数:', slow2Count);
+
+        // 1回目を先に完了
+        await act(async () => {
+            resolveFirst!({
+                comment: { id: 'slow1', comment: '遅い1', authorId: 'user123', photoId: 'photo123', createdAt: '2025-07-26T10:00:00Z' }
+            });
+        });
+
+        // 2回目を完了
+        await act(async () => {
+            resolveSecond!({
+                comment: { id: 'slow2', comment: '遅い2', authorId: 'user123', photoId: 'photo123', createdAt: '2025-07-26T10:01:00Z' }
+            });
+        });
+
+        // 最終確認
+        await waitFor(() => {
+            const finalSlow1 = screen.queryAllByText('遅い1');
+            const finalSlow2 = screen.queryAllByText('遅い2');
+
+            console.log('全完了後:');
+            console.log('- 遅い1要素数:', finalSlow1.length);
+            console.log('- 遅い2要素数:', finalSlow2.length);
+
+            // バグがあれば、どちらかが消えている
+            if (finalSlow1.length === 0 || finalSlow2.length === 0) {
+                console.log('❌ バグ確認：コメントが消えています');
+            } else {
+                console.log('✅ 両方のコメントが表示されている');
+            }
+        });
     });
 
-    test('setCommentsの動作シミュレーション', async () => {
+    test('setCommentsのロジック検証（ユニットテスト）', () => {
+        // これは実装のロジックだけをテストする補助的なテスト
         const defaultComments = [
             { id: 'comment1', comment: '古いコメント1' },
             { id: 'comment2', comment: '古いコメント2' }
         ];
 
-        // 実際のコードの動作をシミュレート
-        console.log('初期 defaultComments:', defaultComments);
+        console.log('=== setCommentsロジック検証 ===');
 
-        // 1回目のコメント完了
-        const newComment1 = { id: 'new1', comment: 'テスト1' };
-        const afterFirst = [newComment1, ...defaultComments];
-        console.log('1回目完了後 comments:', afterFirst);
+        // 現在の実装（バグあり）
+        console.log('現在の実装:');
+        const current_afterFirst = [{ id: 'new1', comment: 'テスト1' }, ...defaultComments];
+        console.log('1回目完了後:', current_afterFirst.map(c => c.comment));
 
-        // 2回目のコメント完了（問題のコード）
-        const newComment2 = { id: 'new2', comment: 'テスト2' };
-        const afterSecond = [newComment2, ...defaultComments]; // ←defaultCommentsを再使用
-        console.log('2回目完了後 comments:', afterSecond);
+        const current_afterSecond = [{ id: 'new2', comment: 'テスト2' }, ...defaultComments]; // バグ！
+        console.log('2回目完了後:', current_afterSecond.map(c => c.comment));
+        console.log('テスト1が残ってる？', current_afterSecond.some(c => c.comment === 'テスト1'));
 
-        // テスト1が消えていることを確認
-        expect(afterSecond.some(c => c.comment === 'テスト1')).toBe(false);
-        console.log('❌ 問題確認：テスト1が消えました');
-    });
+        // 修正版の実装
+        console.log('\n修正版の実装:');
+        let fixed_comments = defaultComments;
+        fixed_comments = [{ id: 'new1', comment: 'テスト1' }, ...fixed_comments];
+        console.log('1回目完了後:', fixed_comments.map(c => c.comment));
 
-    test('修正版の動作シミュレーション', async () => {
-        const defaultComments = [
-            { id: 'comment1', comment: '古いコメント1' },
-            { id: 'comment2', comment: '古いコメント2' }
-        ];
+        fixed_comments = [{ id: 'new2', comment: 'テスト2' }, ...fixed_comments];
+        console.log('2回目完了後:', fixed_comments.map(c => c.comment));
+        console.log('テスト1が残ってる？', fixed_comments.some(c => c.comment === 'テスト1'));
 
-        let currentComments = defaultComments;
-
-        // 1回目のコメント完了
-        const newComment1 = { id: 'new1', comment: 'テスト1' };
-        currentComments = [newComment1, ...currentComments]; // 修正版
-        console.log('1回目完了後 comments:', currentComments);
-
-        // 2回目のコメント完了（修正版）
-        const newComment2 = { id: 'new2', comment: 'テスト2' };
-        currentComments = [newComment2, ...currentComments]; // 最新のcommentsを使用
-        console.log('2回目完了後 comments:', currentComments);
-
-        // テスト1が残っていることを確認
-        expect(currentComments.some(c => c.comment === 'テスト1')).toBe(true);
-        expect(currentComments.some(c => c.comment === 'テスト2')).toBe(true);
-        console.log('✅ 修正版：両方のコメントが存在します');
+        // アサーション
+        expect(current_afterSecond.some(c => c.comment === 'テスト1')).toBe(false); // 現在はバグ
+        expect(fixed_comments.some(c => c.comment === 'テスト1')).toBe(true); // 修正版は正常
     });
 }); 

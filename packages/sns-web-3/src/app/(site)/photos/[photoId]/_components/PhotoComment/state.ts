@@ -16,16 +16,14 @@ export const initialFormState = (
 });
 
 export const handleSuccess = (comment: Comment): FormState => ({
-  ...initialFormState(),
-  comment,
+  ...initialFormState({ comment }),
 });
 
 export const handleError = (error: {
   message: string;
   status: number;
 }): FormState => ({
-  ...initialFormState(),
-  error,
+  ...initialFormState({ error }),
 });
 
 export const errors = {
